@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WB Position Tracker</title>
+    <!-- Возвращаем Chart.js и плагин -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0"></script>
+    <style>
+        body { font-family: sans-serif; margin: 20px; }
+        h1, h2 { text-align: center; }
+        .container { max-width: 95%; margin: auto; }
+        /* Разделяем правила для разных секций */
+        .form-section { margin-bottom: 8px; padding: 0; border: 1px solid #ccc; border-radius: 5px; }
+        .items-section, .history-section { margin-bottom: 15px; padding: 0; border: 1px solid #ccc; border-radius: 5px; }
+        .items-section {
+            position: sticky; /* Делаем секцию таблицы прилипающей */
+            top: 0; /* Прилипать к верху */
+            z-index: 10; /* Чтобы быть поверх других элементов при прокрутке */
+            background-color: white; /* Фон, чтобы текст под таблицей не просвечивал */
+        }
+        .form-section form { display: flex; gap: 10px; align-items: center; padding: 10px; /* Небольшой паддинг для самой формы внутри */ }
+        .form-section label { margin-right: 5px; }
+        .form-section input[type="text"] { flex-grow: 1; padding: 4px; border: 1px solid #ccc; border-radius: 3px; }
+        .form-section button { padding: 4px 8px; background-color: #007bff; color: white; border: none; border-radius: 3px; cursor: pointer; }
+        /* Стили для кнопки проверки, когда она в форме */
+        .form-section #check-button {
+            background-color: #28a745; /* Оставляем зеленый цвет */
+            margin-left: auto; /* Прижимаем к правому краю формы */
+        }
+        .form-section #check-button:hover {
+             background-color: #218838;
+        }
+        .form-section button:hover { background-color: #0056b3; }
+        table { width: 100%; border-collapse: collapse; margin-top: 0; /* Убираем отступ таблицы */}
+        th, td { border: 1px solid #ddd; padding: 0 4px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        /* Центрируем содержимое последней ячейки (где кнопка удаления) */
+        .items-section td:last-child {
+            text-align: center;
+        }
+        /* Новый дизайн кнопки удаления */
+        .remove-form button {
+            background-color: transparent; /* Убираем фон */
+            border: none; /* Убираем рамку */
+            color: #888; /* Серый цвет для 'X' */
+            padding: 2px 5px; /* Небольшой паддинг */
+            font-size: 1.1em; /* Чуть крупнее 'X' */
+            font-weight: bold;
+            cursor: pointer; /* Указываем, что кликабельно */
+            line-height: 1; /* Для лучшего вертикального выравнивания */
+        }
+        .remove-form button:hover {
+            background-color: transparent; /* Фон при наведении не нужен */
+            color: #dc3545; /* Становится красным при наведении */
+        }
+        .no-data { color: #888; }
+        .position-history ul { list-style: none; padding: 0; }
+        .position-history li { margin-bottom: 5px; padding: 5px; background-color: #f9f9f9; border-radius: 3px; font-size: 0.9em;}
+        .position-history strong { display: inline-block; min-width: 150px; }
+
+        /* Стили для контейнера графика Chart.js */
+        .chart-container {
+            margin-bottom: 20px;
+            border: 1px solid #eee;
+            padding: 0; /* Убираем отступ у контейнера графика */
+            border-radius: 5px;
+            min-height: 200px;
+            /* Добавим небольшой padding для заголовка h3 внутри */
+            padding-top: 5px;
+        }
+        .chart-container h3 {
+            margin-bottom: 5px; /* Уменьшаем отступ под заголовком */
+            padding-left: 10px; /* Отступ слева для заголовка */
+        }
+        /* Делаем заголовок таблицы тоже прилипающим */
+        .items-section thead {
+            position: sticky;
+            top: 0; /* Прилипает к верху внутри своего контейнера .items-section */
+            background-color: #f2f2f2; /* Фон для заголовка */
+            z-index: 11; /* Должен быть выше самой секции, если она тоже sticky */
+        }
+        /* Стили для сетки графиков */
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr); /* Два столбца равной ширины */
+            gap: 15px; /* Промежуток между графиками */
+        }
+        /* Уменьшаем шрифт заголовка Истории позиций */
+        .history-section h2 {
+            font-size: 1.2em;
+            margin-bottom: 10px; /* Уменьшим и отступ под ним */
+        }
+        /* Убираем стандартное выделение ссылок в таблице */
+        .items-section td a {
+            color: inherit; /* Наследовать цвет текста от родителя */
+            text-decoration: none; /* Убрать подчеркивание */
+        }
+
+        /* Добавляем подчеркивание при наведении на ссылку в таблице */
+        .items-section td a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="form-section">
+            <form action="{{ url_for('add_item') }}" method="post">
+                <label for="sku">SKU:</label>
+                <input type="text" id="sku" name="sku" required>
+                <label for="query">Поисковый запрос:</label>
+                <input type="text" id="query" name="query" required>
+                <button type="submit">Добавить</button>
+                <!-- Перемещенная кнопка проверки -->
+                <button type="button" id="check-button" onclick="startCheck()">Проверить позиции сейчас</button>
+            </form>
+        </div>
+
+        <!-- Статус проверки теперь можно показывать под формой -->
+        <div id="check-status" style="margin-top: 5px; margin-bottom: 10px; text-align: center; font-weight: bold; min-height: 1.2em;"></div>
+
+        <div class="items-section">
+            {% if items %}
+                <table>
+                    <thead>
+                        <tr>
+                            <th>SKU</th>
+                            <th>Запрос</th>
+                            <th>Последняя проверка</th>
+                            <th>Позиция в выдаче</th>
+                            <th>Страница</th>
+                            <th>Позиция на странице</th>
+                            <th>Удалить</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in items %}
+                            {% set item_key = item.sku + '_' + item.query %}
+                            {% set sorted_history = history.get(item_key, []) | sort(attribute='timestamp', reverse=true) %}
+                            {% set latest_data = sorted_history | first %}
+                            {% set previous_data = sorted_history[1] if sorted_history | length > 1 else none %}
+                            <tr>
+                                <td><a href="https://www.wildberries.ru/catalog/{{ item.sku }}/detail.aspx" target="_blank" rel="noopener noreferrer">{{ item.sku }}</a></td>
+                                <td><a href="https://www.wildberries.ru/catalog/0/search.aspx?search={{ item.encoded_query }}&targeturl=ST" target="_blank" rel="noopener noreferrer">{{ item.query }}</a></td>
+                                <td class="no-data">
+                                    {% if latest_data %}
+                                        {{ latest_data.timestamp }}
+                                    {% else %}
+                                        Нет данных
+                                    {% endif %}
+                                </td>
+                                {% if latest_data and latest_data.absolute_position is not none %}
+                                    <td>
+                                        {{ latest_data.absolute_position }}
+                                        {% if previous_data and previous_data.absolute_position is not none %}
+                                            {% set current_pos = latest_data.absolute_position %}
+                                            {% set prev_pos = previous_data.absolute_position %}
+                                            {% if current_pos < prev_pos %}
+                                                <span style="color: green; font-weight: bold;">&uarr;</span>
+                                            {% elif current_pos > prev_pos %}
+                                                <span style="color: red; font-weight: bold;">&darr;</span>
+                                            {% else %}
+                                                <span style="color: gray;">&mdash;</span>
+                                            {% endif %}
+                                        {% endif %}
+                                    </td>
+                                    <td>{{ latest_data.page }}</td>
+                                    <td>{{ latest_data.position_on_page }}</td>
+                                {% elif latest_data %}
+                                    <td class="no-data">Не найден</td>
+                                    <td class="no-data">-</td>
+                                    <td class="no-data">-</td>
+                                {% else %}
+                                    <td class="no-data">Нет данных</td>
+                                    <td class="no-data">-</td>
+                                    <td class="no-data">-</td>
+                                {% endif %}
+                                <td>
+                                    <form action="{{ url_for('remove_item') }}" method="post" class="remove-form" style="display:inline;">
+                                        <input type="hidden" name="sku" value="{{ item.sku }}">
+                                        <input type="hidden" name="query" value="{{ item.query }}">
+                                        <button type="submit">X</button>
+                                    </form>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            {% else %}
+                <p class="no-data">Пока нет отслеживаемых товаров.</p>
+            {% endif %}
+        </div>
+
+        <div class="history-section">
+            <h2>История позиций</h2>
+            {% if history %}
+                <div class="charts-grid">
+                {% for item in items %}
+                    {% set item_key = item.sku + '_' + item.query %}
+                    {# Проверяем, есть ли вообще история для этого ключа #}
+                    {% set item_history_exists = history.get(item_key) %}
+                    {% if item_history_exists %}
+                        <div class="chart-container">
+                            <h3>{{ item.sku }} - "{{ item.query }}"</h3>
+                            {# Возвращаем canvas #}
+                            <canvas id="chart-{{ item_key }}" style="max-height: 200px;"></canvas>
+                            <div id="chart-message-{{ item_key }}" class="no-data" style="display: none; text-align: center; padding: 0;">Нет данных для графика.</div>
+                        </div>
+                    {% else %} {# Если истории для ключа нет #}
+                        <div class="chart-container" style="text-align: center; padding: 10px 0;"> {# Небольшой паддинг для текста #}
+                            <h3>{{ item.sku }} - "{{ item.query }}"</h3>
+                            <p class="no-data">Нет истории для отображения.</p>
+                        </div>
+                    {% endif %}
+                {% endfor %}
+                </div> {# конец .charts-grid #}
+            {% else %}
+                 <p class="no-data">Нет истории для отображения.</p>
+            {% endif %}
+        </div>
+
+    </div>
+
+<script>
+    let intervalId = null;
+
+    function updateStatusDisplay(status) {
+        const statusDiv = document.getElementById('check-status');
+        const checkButton = document.getElementById('check-button');
+
+        if (!statusDiv) return;
+
+        let message = status.message || 'Ожидание...';
+        if (status.running && status.total > 0) {
+            const progressPercent = status.total > 0 ? Math.round((status.progress / status.total) * 100) : 0;
+            message += ` (${status.progress}/${status.total}, ${progressPercent}%)`;
+        }
+        statusDiv.textContent = message;
+
+        if (status.running) {
+            if (checkButton) checkButton.disabled = true; // Блокируем кнопку во время проверки
+            if (!intervalId) { // Начинаем опрос только если еще не запущен
+               intervalId = setInterval(fetchStatus, 2000); // Запрашивать статус каждые 2 секунды
+            }
+        } else {
+            if (checkButton) checkButton.disabled = false; // Разблокируем кнопку
+            if (intervalId) {
+                clearInterval(intervalId);
+                intervalId = null;
+                // Если проверка только что завершилась (а не просто была не запущена), перезагружаем страницу
+                if (message.includes("завершена") || message.includes("Нет товаров")) {
+                    console.log("Check finished, reloading page...");
+                    setTimeout(() => { window.location.reload(); }, 1000); // Небольшая задержка перед перезагрузкой
+                }
+            }
+        }
+    }
+
+    function fetchStatus() {
+        fetch('{{ url_for("get_check_status") }}') // Используем url_for для генерации URL
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Network response was not ok ' + response.statusText);
+                }
+                return response.json();
+            })
+            .then(status => {
+                console.log("Status received:", status); // Лог для отладки
+                updateStatusDisplay(status);
+            })
+            .catch(error => {
+                console.error('Error fetching status:', error);
+                const statusDiv = document.getElementById('check-status');
+                if(statusDiv) statusDiv.textContent = 'Ошибка получения статуса.';
+                if (intervalId) {
+                   clearInterval(intervalId);
+                   intervalId = null;
+                }
+                 const checkButton = document.getElementById('check-button');
+                 if (checkButton) checkButton.disabled = false; // Разблокируем кнопку при ошибке
+            });
+    }
+
+    function startCheck() {
+        const statusDiv = document.getElementById('check-status');
+        const checkButton = document.getElementById('check-button');
+        if (statusDiv) statusDiv.textContent = 'Запуск проверки...';
+        if (checkButton) checkButton.disabled = true;
+
+        // Инициируем проверку на сервере
+        fetch('{{ url_for("check_positions_start") }}')
+            .then(response => {
+                if (!response.ok) {
+                    // Проверка, возможно, уже запущена (сервер может вернуть ошибку или редирект)
+                    console.warn('Initial check request issue, fetching status directly...');
+                 }
+                // Независимо от ответа старта, начинаем опрос статуса
+                fetchStatus(); // Первый запрос статуса сразу
+                if (!intervalId) { // Убедимся, что интервал запустится
+                    intervalId = setInterval(fetchStatus, 2000);
+                }
+            })
+            .catch(error => {
+                 console.error('Error initiating check:', error);
+                 if(statusDiv) statusDiv.textContent = 'Ошибка запуска проверки.';
+                 if (checkButton) checkButton.disabled = false; // Разблокируем кнопку при ошибке
+            });
+    }
+
+    // Возвращаем JS для рендеринга графиков Chart.js
+    // Регистрируем плагин datalabels
+    Chart.register(ChartDataLabels);
+
+    function renderCharts() {
+
+        // Используем JSON.parse для большей надежности
+        let historyData, items;
+        try {
+            const historyJsonString = '{{ history | tojson | safe }}';
+            const itemsJsonString = '{{ items | tojson | safe }}';
+            historyData = JSON.parse(historyJsonString);
+            items = JSON.parse(itemsJsonString);
+        } catch (e) {
+            console.error("Ошибка парсинга данных history/items из Jinja:", e);
+            return; // Прерываем рендеринг графиков
+        }
+
+        console.log("Items for charts:", items);
+        console.log("History data for charts:", historyData);
+
+        if (!historyData || !items || items.length === 0) {
+            console.log("Недостаточно данных для построения графиков.");
+            return;
+        }
+
+        items.forEach(item => {
+            const itemKey = item.sku + '_' + item.query;
+            const itemHistory = historyData[itemKey];
+            const chartElement = document.getElementById('chart-' + itemKey);
+            const messageElement = document.getElementById('chart-message-' + itemKey);
+
+            if (!chartElement) {
+                console.warn("Canvas element not found for key:", itemKey);
+                return;
+            }
+
+            if (itemHistory && itemHistory.length > 0) {
+                itemHistory.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+                const filteredHistory = [];
+                if (itemHistory.length > 0) {
+                    filteredHistory.push(itemHistory[0]);
+                    for (let i = 1; i < itemHistory.length; i++) {
+                        if (itemHistory[i].absolute_position !== filteredHistory[filteredHistory.length - 1].absolute_position) {
+                            filteredHistory.push(itemHistory[i]);
+                        }
+                    }
+                }
+                if (filteredHistory.length === 1 && itemHistory.length > 1) {
+                    filteredHistory.push(itemHistory[1]);
+                }
+
+                const labels = filteredHistory.map(entry => {
+                    const d = new Date(entry.timestamp);
+                    return `${d.getDate().toString().padStart(2, '0')}.${(d.getMonth() + 1).toString().padStart(2, '0')} ${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+                });
+                const dataPoints = filteredHistory.map(entry => entry.absolute_position);
+
+                try {
+                    new Chart(chartElement.getContext('2d'), {
+                        type: 'line',
+                        data: {
+                            labels: labels,
+                            datasets: [{
+                                label: 'Позиция',
+                                data: dataPoints,
+                                borderColor: 'rgb(75, 192, 192)',
+                                backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                                tension: 0.1,
+                                spanGaps: true,
+                                fill: false,
+                                pointBackgroundColor: 'rgb(75, 192, 192)',
+                                pointBorderColor: 'rgb(75, 192, 192)',
+                                pointRadius: 4,
+                                pointHoverRadius: 6
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            layout: {
+                                padding: {
+                                    top: 25, // Отступ сверху внутри области графика
+                                    bottom: 10 // Небольшой отступ снизу
+                                }
+                            },
+                            scales: {
+                                y: { beginAtZero: false, reverse: true },
+                                x: { ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 15 } }
+                            },
+                            plugins: {
+                                legend: { display: false },
+                                tooltip: {
+                                    enabled: true,
+                                    callbacks: {
+                                        label: function(context) {
+                                            let label = context.dataset.label || '';
+                                            if (label) { label += ': '; }
+                                            const originalEntry = filteredHistory[context.dataIndex];
+                                            if (context.parsed.y !== null) {
+                                                label += context.parsed.y;
+                                                if(originalEntry && originalEntry.page){
+                                                   label += ` (Стр. ${originalEntry.page}, № ${originalEntry.position_on_page})`;
+                                                }
+                                            } else {
+                                                label += 'Не найден';
+                                            }
+                                            return label;
+                                        }
+                                    }
+                                },
+                                datalabels: {
+                                    display: true,
+                                    clamp: true,
+                                    align: 'end',
+                                    anchor: 'end',
+                                    offset: 4,
+                                    color: '#444',
+                                    font: {
+                                        size: 13,
+                                        weight: 'bold'
+                                    },
+                                    formatter: function(value) { return value !== null ? value : null; }
+                                }
+                            }
+                        }
+                    });
+                } catch (e) {
+                    console.error("Ошибка при создании графика для", itemKey, e);
+                    if (messageElement) {
+                        messageElement.textContent = "Ошибка при построении графика.";
+                        messageElement.style.display = 'block';
+                    }
+                }
+            } else {
+                 console.log("Нет истории для", itemKey);
+                 if (messageElement) {
+                    messageElement.style.display = 'block';
+                 }
+            }
+        });
+    }
+
+    // При загрузке страницы, сразу проверить статус, вдруг проверка уже идет
+    document.addEventListener('DOMContentLoaded', () => {
+        fetchStatus(); // Проверяем статус фоновой задачи
+        renderCharts(); // Рисуем графики
+    });
+
+</script>
+
+</body>
+</html> 
